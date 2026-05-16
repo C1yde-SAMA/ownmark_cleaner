@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import threading
+import traceback
 import uuid
 from pathlib import Path
 
@@ -26,6 +28,20 @@ PREVIEW_DIR = ROOT / "web_previews"
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 PREVIEW_DIR.mkdir(exist_ok=True)
+
+JOBS: dict[str, dict] = {}
+JOB_LOCK = threading.Lock()
+
+
+def set_job(job_id: str, **kwargs) -> None:
+    with JOB_LOCK:
+        job = JOBS.setdefault(job_id, {})
+        job.update(kwargs)
+
+
+def get_job(job_id: str) -> dict:
+    with JOB_LOCK:
+        return dict(JOBS.get(job_id, {}))
 
 
 def safe_path(path_text: str) -> Path:
@@ -88,8 +104,8 @@ def get_preset(name: str) -> dict:
             "detail_sigma": 2.0,
             "blur_kernel": 21,
             "blur_strength": 0.45,
-            "blur_feather": 18,
-            "corner_radius": 22,
+            "blur_feather": 22,
+            "corner_radius": 28,
             "tile_expand": 1,
             "passes": 1,
         },
@@ -101,8 +117,8 @@ def get_preset(name: str) -> dict:
             "detail_sigma": 2.0,
             "blur_kernel": 31,
             "blur_strength": 0.70,
-            "blur_feather": 20,
-            "corner_radius": 26,
+            "blur_feather": 24,
+            "corner_radius": 32,
             "tile_expand": 3,
             "passes": 1,
         },
@@ -114,8 +130,8 @@ def get_preset(name: str) -> dict:
             "detail_sigma": 2.0,
             "blur_kernel": 61,
             "blur_strength": 1.0,
-            "blur_feather": 24,
-            "corner_radius": 32,
+            "blur_feather": 28,
+            "corner_radius": 38,
             "tile_expand": 6,
             "passes": 2,
         },
@@ -177,9 +193,6 @@ def draw_rounded_rect(
     y2: int,
     radius: int,
 ) -> None:
-    """
-    Draw a filled rounded rectangle on mask.
-    """
     if x2 <= x1 or y2 <= y1:
         return
 
@@ -193,11 +206,9 @@ def draw_rounded_rect(
         mask[y1:y2, x1:x2] = 255
         return
 
-    # Center rectangles
     mask[y1:y2, x1 + radius:x2 - radius] = 255
     mask[y1 + radius:y2 - radius, x1:x2] = 255
 
-    # Four rounded corners
     cv2.circle(mask, (x1 + radius, y1 + radius), radius, 255, -1)
     cv2.circle(mask, (x2 - radius - 1, y1 + radius), radius, 255, -1)
     cv2.circle(mask, (x1 + radius, y2 - radius - 1), radius, 255, -1)
@@ -208,14 +219,8 @@ def build_region_mask(
     frame_shape: tuple[int, int, int],
     rects: list[tuple[int, int, int, int]],
     expand: int = 0,
-    corner_radius: int = 18,
+    corner_radius: int = 28,
 ) -> np.ndarray:
-    """
-    Build a rounded rectangle mask for the whole selected region.
-
-    corner_radius:
-      larger = more rounded corners.
-    """
     h, w = frame_shape[:2]
     mask = np.zeros((h, w), dtype=np.uint8)
 
@@ -226,7 +231,6 @@ def build_region_mask(
         y2 = min(h, int(y + rh) + expand)
 
         if x2 > x1 and y2 > y1:
-            # Auto limit radius so tiny boxes do not break.
             auto_radius = min(corner_radius, max(4, min(x2 - x1, y2 - y1) // 3))
             draw_rounded_rect(mask, x1, y1, x2, y2, auto_radius)
 
@@ -240,8 +244,9 @@ def apply_gaussian_blur_to_regions(
 ) -> np.ndarray:
     blur_kernel = int(preset.get("blur_kernel", 31))
     blur_strength = float(preset.get("blur_strength", 0.75))
-    blur_feather = int(preset.get("blur_feather", 8))
+    blur_feather = int(preset.get("blur_feather", 24))
     tile_expand = int(preset.get("tile_expand", 0))
+    corner_radius = int(preset.get("corner_radius", 32))
 
     if blur_strength <= 0:
         return frame
@@ -251,8 +256,6 @@ def apply_gaussian_blur_to_regions(
 
     if blur_kernel % 2 == 0:
         blur_kernel += 1
-
-    corner_radius = int(preset.get("corner_radius", 24))
 
     mask = build_region_mask(
         frame.shape,
@@ -366,6 +369,7 @@ def process_video_tiled(
     crf: int = 15,
     preset_codec: str = "medium",
     audio: str = "copy",
+    job_id: str | None = None,
 ) -> None:
     check_ffmpeg()
 
@@ -389,8 +393,6 @@ def process_video_tiled(
 
     preset = dict(get_preset(preset_name))
 
-    # 细腻/标准模式允许网页手动覆盖模糊参数。
-    # 强力模式不允许网页参数覆盖，否则强力模式会被削弱。
     if preset_name != "strong":
         blur_kernel = int(blur_kernel)
         if blur_kernel < 0:
@@ -408,6 +410,10 @@ def process_video_tiled(
         preset["blur_strength"] = blur_strength
 
     frame_index = 0
+    total_frames = max(1, int(info.total_frames or 1))
+
+    if job_id:
+        set_job(job_id, progress=0, status="processing")
 
     try:
         while True:
@@ -428,6 +434,11 @@ def process_video_tiled(
             proc.stdin.write(frame.tobytes())
 
             frame_index += 1
+
+            if frame_index % 5 == 0 or frame_index >= total_frames:
+                progress = min(99, int(frame_index * 100 / total_frames))
+                if job_id:
+                    set_job(job_id, progress=progress, status="processing")
 
             if frame_index % 30 == 0:
                 print(f"Processed {frame_index} frames")
@@ -510,6 +521,22 @@ def serve_output(filename):
     return send_from_directory(OUTPUT_DIR, filename, as_attachment=True)
 
 
+@app.route("/progress/<job_id>")
+def progress(job_id):
+    job = get_job(job_id)
+
+    if not job:
+        return jsonify(
+            {
+                "status": "error",
+                "progress": 0,
+                "error": "Job not found",
+            }
+        ), 404
+
+    return jsonify(job)
+
+
 @app.route("/clean", methods=["POST"])
 def clean():
     try:
@@ -550,30 +577,63 @@ def clean():
 
         output_name = f"{video_path.stem}_cleaned_{uuid.uuid4().hex[:8]}.mp4"
         output_path = OUTPUT_DIR / output_name
+        output_url = f"/outputs/{output_name}"
 
-        process_video_tiled(
-            input_path=video_path,
-            output_path=output_path,
-            rects=parsed_rects,
-            split_count=split_count,
-            preset_name=preset_name,
-            blur_kernel=blur_kernel,
-            blur_strength=blur_strength,
-            crf=15,
-            preset_codec="medium",
-            audio="copy",
+        job_id = uuid.uuid4().hex
+
+        set_job(
+            job_id,
+            status="queued",
+            progress=0,
+            error=None,
+            output_url=output_url,
+            output_path=str(output_path.relative_to(ROOT)),
         )
+
+        def worker():
+            try:
+                set_job(job_id, status="processing", progress=0)
+
+                process_video_tiled(
+                    input_path=video_path,
+                    output_path=output_path,
+                    rects=parsed_rects,
+                    split_count=split_count,
+                    preset_name=preset_name,
+                    blur_kernel=blur_kernel,
+                    blur_strength=blur_strength,
+                    crf=15,
+                    preset_codec="medium",
+                    audio="copy",
+                    job_id=job_id,
+                )
+
+                set_job(
+                    job_id,
+                    status="done",
+                    progress=100,
+                    error=None,
+                    output_url=output_url,
+                    output_path=str(output_path.relative_to(ROOT)),
+                )
+
+            except Exception as e:
+                print(traceback.format_exc())
+                set_job(
+                    job_id,
+                    status="error",
+                    progress=0,
+                    error=str(e),
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
 
         return jsonify(
             {
-                "message": "done",
-                "output_url": f"/outputs/{output_name}",
+                "message": "started",
+                "job_id": job_id,
+                "output_url": output_url,
                 "output_path": str(output_path.relative_to(ROOT)),
-                "rects": parsed_rects,
-                "split_count": split_count,
-                "preset_name": preset_name,
-                "blur_kernel": blur_kernel,
-                "blur_strength": blur_strength,
             }
         )
 

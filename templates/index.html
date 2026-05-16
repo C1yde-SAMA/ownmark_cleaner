@@ -156,7 +156,7 @@
     <div class="hint">
       Load the first frame of your video, then draw one or more regions over the watermark area.<br>
       If one large region creates a visible mosaic patch, increase <b>Tiles Per Region</b>, such as 9, 16, or 25.<br>
-      If the watermark is still visible, try <b>Strong Mode</b>. Strong mode expands the repair area, runs repair twice, and applies stronger blur.
+      If the watermark is still visible, try <b>Strong Mode</b>.
     </div>
 
     <div style="margin-top: 10px;">
@@ -225,7 +225,7 @@
           <option value="51">51 Strong</option>
           <option value="71">71 Very strong</option>
         </select>
-        <span>Controls blur radius. In Strong mode, this is automatically forced to 61.</span>
+        <span>Controls blur radius. Strong mode automatically forces a stronger value.</span>
       </label>
 
       <label>
@@ -238,7 +238,7 @@
           <option value="0.95">0.95 Very strong</option>
           <option value="1.00">1.00 Full blur</option>
         </select>
-        <span>Controls how much blur is blended in. In Strong mode, this is automatically forced to 1.0.</span>
+        <span>Controls how much blur is blended in. Strong mode automatically forces 1.0.</span>
       </label>
     </div>
 
@@ -387,6 +387,20 @@ function clearRects() {
   draw();
 }
 
+async function readJsonResponse(res) {
+  const text = await res.text();
+
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new Error(
+      "Server returned non-JSON response. " +
+      "This usually means the backend route is missing or the server crashed. " +
+      text.slice(0, 160)
+    );
+  }
+}
+
 async function uploadVideo() {
   const input = document.getElementById("uploadInput");
   const file = input.files[0];
@@ -406,7 +420,7 @@ async function uploadVideo() {
     body: form
   });
 
-  const data = await res.json();
+  const data = await readJsonResponse(res);
 
   if (!res.ok) {
     setStatus(data.error || "Upload failed.");
@@ -438,7 +452,7 @@ async function loadPreview() {
     body: JSON.stringify({video_path: videoPath})
   });
 
-  const data = await res.json();
+  const data = await readJsonResponse(res);
 
   if (!res.ok) {
     setStatus(data.error || "Failed to load preview.");
@@ -501,7 +515,7 @@ async function cleanVideo() {
     body: JSON.stringify(payload)
   });
 
-  const data = await res.json();
+  const data = await readJsonResponse(res);
 
   if (!res.ok) {
     setStatus(data.error || "Failed to start processing.");
@@ -534,7 +548,7 @@ function pollProgress(jobId) {
   progressTimer = setInterval(async () => {
     try {
       const res = await fetch(`/progress/${jobId}`);
-      const data = await res.json();
+      const data = await readJsonResponse(res);
 
       if (!res.ok) {
         clearInterval(progressTimer);

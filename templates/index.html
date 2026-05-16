@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>OwnMark Cleaner</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #111;
+      color: #eee;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+
+    .panel {
+      background: #1d1d1d;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    input, select, button {
+      background: #222;
+      color: #eee;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 4px;
+    }
+
+    button {
+      cursor: pointer;
+      background: #2f6fed;
+      border: none;
+    }
+
+    button.secondary {
+      background: #444;
+    }
+
+    button.danger {
+      background: #b53a3a;
+    }
+
+    .hint {
+      color: #aaa;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    #canvasWrap {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+      border: 1px solid #444;
+      border-radius: 8px;
+      overflow: auto;
+      background: #000;
+    }
+
+    canvas {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      cursor: crosshair;
+    }
+
+    .rect-list {
+      font-size: 13px;
+      color: #ccc;
+      white-space: pre-wrap;
+      background: #151515;
+      border-radius: 8px;
+      padding: 8px;
+      margin-top: 8px;
+      max-height: 200px;
+      overflow: auto;
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 10px;
+      background: #151515;
+      border-radius: 8px;
+      color: #ddd;
+      white-space: pre-wrap;
+    }
+
+    .progress-wrap {
+      margin-top: 12px;
+      width: 100%;
+      height: 22px;
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 999px;
+      overflow: hidden;
+      display: none;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: #2f6fed;
+      transition: width 0.25s ease;
+    }
+
+    .progress-text {
+      margin-top: 6px;
+      color: #aaa;
+      font-size: 13px;
+      display: none;
+    }
+
+    .control-row {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    label {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 14px;
+      color: #ddd;
+    }
+
+    label span {
+      color: #aaa;
+      font-size: 12px;
+    }
+
+    a {
+      color: #7ba7ff;
+    }
+
+    code {
+      background: #222;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>OwnMark Cleaner</h1>
+
+  <div class="panel">
+    <div class="hint">
+      Load the first frame of your video, then draw one or more regions over the watermark area.<br>
+      If one large region creates a visible mosaic patch, increase <b>Tiles Per Region</b>, such as 9, 16, or 25.<br>
+      If the watermark is still visible, try <b>Strong Mode</b>. Strong mode expands the repair area, runs repair twice, and applies stronger blur.
+    </div>
+
+    <div style="margin-top: 10px;">
+      <input id="videoPath" value="input.mp4" style="width: 320px;" />
+      <button onclick="loadPreview()">Load First Frame</button>
+    </div>
+
+    <div style="margin-top: 8px;">
+      <input id="uploadInput" type="file" accept="video/*" />
+      <button onclick="uploadVideo()">Upload and Load</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="hint">
+      Drag on the frame to add a region. You can add multiple regions.<br>
+      Try to cover only the watermark area. Avoid selecting too much background.
+    </div>
+
+    <div id="canvasWrap">
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <div style="margin-top: 12px;">
+      <button class="secondary" onclick="undoRect()">Undo Last Region</button>
+      <button class="danger" onclick="clearRects()">Clear All Regions</button>
+    </div>
+
+    <div id="rectList" class="rect-list">No regions selected</div>
+  </div>
+
+  <div class="panel">
+    <h3>Processing Settings</h3>
+
+    <div class="control-row">
+      <label>
+        Tiles Per Region
+        <select id="splitCount">
+          <option value="1">1 tile</option>
+          <option value="4">4 tiles</option>
+          <option value="9" selected>9 tiles</option>
+          <option value="16">16 tiles</option>
+          <option value="25">25 tiles</option>
+          <option value="36">36 tiles</option>
+        </select>
+        <span>More tiles reduce large patch artifacts, but processing is slower.</span>
+      </label>
+
+      <label>
+        Processing Mode
+        <select id="presetName">
+          <option value="fine" selected>Fine</option>
+          <option value="normal">Normal</option>
+          <option value="strong">Strong</option>
+        </select>
+        <span>Strong mode expands the area, repairs twice, and uses stronger blur.</span>
+      </label>
+
+      <label>
+        Gaussian Blur Size
+        <select id="blurKernel">
+          <option value="0">0 No blur</option>
+          <option value="7">7 Light</option>
+          <option value="15">15 Medium</option>
+          <option value="31" selected>31 Noticeable</option>
+          <option value="51">51 Strong</option>
+          <option value="71">71 Very strong</option>
+        </select>
+        <span>Controls blur radius. In Strong mode, this is automatically forced to 61.</span>
+      </label>
+
+      <label>
+        Gaussian Blur Strength
+        <select id="blurStrength">
+          <option value="0">0 No blur</option>
+          <option value="0.25">0.25 Light</option>
+          <option value="0.50">0.50 Medium</option>
+          <option value="0.75" selected>0.75 Strong</option>
+          <option value="0.95">0.95 Very strong</option>
+          <option value="1.00">1.00 Full blur</option>
+        </select>
+        <span>Controls how much blur is blended in. In Strong mode, this is automatically forced to 1.0.</span>
+      </label>
+    </div>
+
+    <div class="hint" style="margin-top: 12px;">
+      Recommended:<br>
+      <code>16 tiles + Normal + Blur Size 31 + Blur Strength 0.75</code><br>
+      If the watermark is still visible:<br>
+      <code>25 tiles + Strong</code><br>
+      If the area looks too blurry:<br>
+      <code>25 tiles + Fine + Blur Size 15 + Blur Strength 0.50</code>
+    </div>
+
+    <div style="margin-top: 12px;">
+      <button onclick="cleanVideo()">Start Processing</button>
+    </div>
+
+    <div id="progressWrap" class="progress-wrap">
+      <div id="progressBar" class="progress-bar"></div>
+    </div>
+    <div id="progressText" class="progress-text">0%</div>
+
+    <div id="status" class="status">Waiting</div>
+  </div>
+
+<script>
+let canvas = document.getElementById("canvas");
+let ctx = canvas.getContext("2d");
+
+let image = new Image();
+let imageLoaded = false;
+
+let rects = [];
+let drawing = false;
+let startX = 0;
+let startY = 0;
+let currentRect = null;
+
+let progressTimer = null;
+
+function getMousePos(e) {
+  const r = canvas.getBoundingClientRect();
+
+  return {
+    x: (e.clientX - r.left) * canvas.width / r.width,
+    y: (e.clientY - r.top) * canvas.height / r.height
+  };
+}
+
+function normalizeRect(x1, y1, x2, y2) {
+  const x = Math.min(x1, x2);
+  const y = Math.min(y1, y2);
+  const w = Math.abs(x2 - x1);
+  const h = Math.abs(y2 - y1);
+
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    w: Math.round(w),
+    h: Math.round(h)
+  };
+}
+
+function draw() {
+  if (!imageLoaded) return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+  ctx.lineWidth = Math.max(2, canvas.width / 800);
+  ctx.font = `${Math.max(14, canvas.width / 60)}px sans-serif`;
+
+  rects.forEach((rect, index) => {
+    ctx.strokeStyle = "rgba(255, 60, 60, 1)";
+    ctx.fillStyle = "rgba(255, 0, 0, 0.22)";
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+
+    ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+    ctx.fillText(`#${index + 1}`, rect.x + 6, rect.y + 20);
+  });
+
+  if (currentRect) {
+    ctx.strokeStyle = "rgba(0, 180, 255, 1)";
+    ctx.fillStyle = "rgba(0, 180, 255, 0.20)";
+    ctx.fillRect(currentRect.x, currentRect.y, currentRect.w, currentRect.h);
+    ctx.strokeRect(currentRect.x, currentRect.y, currentRect.w, currentRect.h);
+  }
+
+  updateRectList();
+}
+
+canvas.addEventListener("mousedown", (e) => {
+  if (!imageLoaded) return;
+
+  const p = getMousePos(e);
+  startX = p.x;
+  startY = p.y;
+  drawing = true;
+  currentRect = null;
+});
+
+canvas.addEventListener("mousemove", (e) => {
+  if (!drawing) return;
+
+  const p = getMousePos(e);
+  currentRect = normalizeRect(startX, startY, p.x, p.y);
+  draw();
+});
+
+canvas.addEventListener("mouseup", (e) => {
+  if (!drawing) return;
+
+  const p = getMousePos(e);
+  const rect = normalizeRect(startX, startY, p.x, p.y);
+
+  drawing = false;
+  currentRect = null;
+
+  if (rect.w > 5 && rect.h > 5) {
+    rects.push(rect);
+  }
+
+  draw();
+});
+
+function updateRectList() {
+  const el = document.getElementById("rectList");
+
+  if (!rects.length) {
+    el.textContent = "No regions selected";
+    return;
+  }
+
+  el.textContent = rects
+    .map((r, i) => `#${i + 1}: x=${r.x}, y=${r.y}, w=${r.w}, h=${r.h}`)
+    .join("\n");
+}
+
+function undoRect() {
+  rects.pop();
+  draw();
+}
+
+function clearRects() {
+  rects = [];
+  draw();
+}
+
+async function uploadVideo() {
+  const input = document.getElementById("uploadInput");
+  const file = input.files[0];
+
+  if (!file) {
+    alert("Please choose a video file.");
+    return;
+  }
+
+  setStatus("Uploading video...");
+
+  const form = new FormData();
+  form.append("video", file);
+
+  const res = await fetch("/upload", {
+    method: "POST",
+    body: form
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    setStatus(data.error || "Upload failed.");
+    return;
+  }
+
+  document.getElementById("videoPath").value = data.video_path;
+  setStatus("Upload complete. Loading first frame...");
+  await loadPreview();
+}
+
+async function loadPreview() {
+  const videoPath = document.getElementById("videoPath").value.trim();
+
+  if (!videoPath) {
+    alert("Please enter a video path.");
+    return;
+  }
+
+  rects = [];
+  currentRect = null;
+  imageLoaded = false;
+
+  setStatus("Reading first frame...");
+
+  const res = await fetch("/preview", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({video_path: videoPath})
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    setStatus(data.error || "Failed to load preview.");
+    return;
+  }
+
+  image.onload = () => {
+    canvas.width = data.width;
+    canvas.height = data.height;
+    imageLoaded = true;
+    draw();
+
+    setStatus(
+      `First frame loaded\n` +
+      `Resolution: ${data.width}x${data.height}\n` +
+      `Frames: ${data.total_frames}\n\n` +
+      `Now draw one or more watermark regions.`
+    );
+  };
+
+  image.src = data.preview_url;
+}
+
+async function cleanVideo() {
+  const videoPath = document.getElementById("videoPath").value.trim();
+
+  if (!videoPath) {
+    alert("Please enter a video path.");
+    return;
+  }
+
+  if (!rects.length) {
+    alert("Please draw at least one region first.");
+    return;
+  }
+
+  const payload = {
+    video_path: videoPath,
+    rects,
+    split_count: Number(document.getElementById("splitCount").value),
+    preset_name: document.getElementById("presetName").value,
+    blur_kernel: Number(document.getElementById("blurKernel").value),
+    blur_strength: Number(document.getElementById("blurStrength").value)
+  };
+
+  setProgress(0, true);
+
+  setStatus(
+    "Job started. Preparing processing...\n" +
+    `Regions: ${rects.length}\n` +
+    `Tiles per region: ${payload.split_count}\n` +
+    `Processing mode: ${payload.preset_name}\n` +
+    `Blur size: ${payload.blur_kernel}\n` +
+    `Blur strength: ${payload.blur_strength}`
+  );
+
+  const res = await fetch("/clean", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    setStatus(data.error || "Failed to start processing.");
+    setProgress(0, false);
+    return;
+  }
+
+  pollProgress(data.job_id);
+}
+
+function setProgress(percent, visible = true) {
+  const wrap = document.getElementById("progressWrap");
+  const bar = document.getElementById("progressBar");
+  const text = document.getElementById("progressText");
+
+  percent = Math.max(0, Math.min(100, Math.round(percent)));
+
+  wrap.style.display = visible ? "block" : "none";
+  text.style.display = visible ? "block" : "none";
+
+  bar.style.width = `${percent}%`;
+  text.textContent = `${percent}%`;
+}
+
+function pollProgress(jobId) {
+  if (progressTimer) {
+    clearInterval(progressTimer);
+  }
+
+  progressTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`/progress/${jobId}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        clearInterval(progressTimer);
+        setStatus(data.error || "Failed to read progress.");
+        return;
+      }
+
+      const progress = Number(data.progress || 0);
+      setProgress(progress, true);
+
+      if (data.status === "queued") {
+        setStatus("Job is queued...");
+      }
+
+      if (data.status === "processing") {
+        setStatus(`Processing video...\nCurrent progress: ${progress}%`);
+      }
+
+      if (data.status === "done") {
+        clearInterval(progressTimer);
+        setProgress(100, true);
+
+        setStatus(
+          `Processing complete\n` +
+          `Output path: ${data.output_path}\n\n` +
+          `Download link:\n${location.origin}${data.output_url}`
+        );
+
+        const a = document.createElement("a");
+        a.href = data.output_url;
+        a.textContent = "Download processed video";
+        a.style.display = "block";
+        a.style.marginTop = "12px";
+
+        const status = document.getElementById("status");
+        status.appendChild(document.createElement("br"));
+        status.appendChild(a);
+      }
+
+      if (data.status === "error") {
+        clearInterval(progressTimer);
+        setStatus(`Processing failed: ${data.error || "Unknown error"}`);
+      }
+
+    } catch (err) {
+      clearInterval(progressTimer);
+      setStatus(`Failed to read progress: ${err}`);
+    }
+  }, 1000);
+}
+
+function setStatus(text) {
+  document.getElementById("status").textContent = text;
+}
+</script>
+</body>
+</html>

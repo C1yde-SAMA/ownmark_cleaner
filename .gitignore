@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Outputs
+outputs/
+*_detected_preview.jpg
+*_detected_mask.png
+*_cleaned.mp4
+*.log

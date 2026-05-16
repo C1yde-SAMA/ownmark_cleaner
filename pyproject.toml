@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ownmark-cleaner"
+version = "0.1.0"
+description = "Local video inpainting CLI for your own fixed watermarks."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+  {name = "Clyde Zhu"}
+]
+dependencies = [
+  "opencv-python>=4.8.0",
+  "numpy>=1.23.0",
+  "tqdm>=4.66.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+  "black>=24.0.0",
+  "ruff>=0.4.0"
+]
+
+[project.scripts]
+ownmark-cleaner = "ownmark_cleaner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
